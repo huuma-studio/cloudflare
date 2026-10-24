@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    // For the fixture app in test/fixtures.
+    "jsx": "react-jsx",
+    "jsxImportSource": "@huuma/ui",
+    // JSR rejects slow types: exports need explicit types.
+    "declaration": true,
+    "isolatedDeclarations": true,
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": ["src", "test", "vite.config.ts"]
+}
