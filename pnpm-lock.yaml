@@ -174,8 +174,8 @@ importers:
         specifier: ^1.64.0
         version: 1.65.0(@types/node@24.19.2)(@voidzero-dev/vite-plus-core@1.1.0(@types/node@24.19.2)(esbuild@0.28.2))(workerd@1.20261019.1)(wrangler@4.152.0(@types/node@24.19.2))
       '@huuma/ui':
-        specifier: link:../ui
-        version: link:../ui
+        specifier: npm:@jsr/huuma__ui@^0.3.0-beta.3
+        version: '@jsr/huuma__ui@0.3.0-beta.3(@types/node@24.19.2)(esbuild@0.28.2)'
     devDependencies:
       '@huuma/route':
         specifier: npm:@jsr/huuma__route@^0.3.1
@@ -603,8 +603,23 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
+  '@jsr/huuma__route@0.2.2':
+    resolution: {integrity: sha512-y6ggi/4gzJjxgSPxtPKTdE0IBTHtBjHka378/TVLVElBihrGN8ZuQIb5QFjNjd9T1mET7SyJLxWgU/j4eKy+yA==, tarball: https://npm.jsr.io/~/11/@jsr/huuma__route/0.2.2.tgz}
+
   '@jsr/huuma__route@0.3.1':
     resolution: {integrity: sha512-AhX2qQhxzwiFnHgg+ZAAV7j29pVJUfnRXulAgmo9TLXZhRflfXcybKmdLo6ZP5KoVlQ8PhCPPNX+jFSmQU1dAQ==, tarball: https://npm.jsr.io/~/11/@jsr/huuma__route/0.3.1.tgz}
+
+  '@jsr/huuma__ui@0.3.0-beta.3':
+    resolution: {integrity: sha512-85Km+Vw4oNcdjVfOIO+c7wyfYkBRpZqH2hltc9+3lc6MhfJMMDed8GdRaFoEL/+gkDvh43QUHDYqiVjwGU0HLA==, tarball: https://npm.jsr.io/~/11/@jsr/huuma__ui/0.3.0-beta.3.tgz}
+
+  '@jsr/huuma__validate@0.2.1':
+    resolution: {integrity: sha512-oW33m8qBZPr0H1gaVhtcwIgJpXhmvHZQYBIDqVmxaQaF8ZEoUwj7XpUg8muh16YU9UwBkPYFkwxYNhvQA1363Q==, tarball: https://npm.jsr.io/~/11/@jsr/huuma__validate/0.2.1.tgz}
+
+  '@jsr/std__internal@1.0.14':
+    resolution: {integrity: sha512-JT8b/t40WcR9q0GDwRZUooY7aXeXnFal8iidE/5TckdAFtvpVAsaJ71/Xgf1SfoChs41s6CZkuCYM8toaNgdvA==, tarball: https://npm.jsr.io/~/11/@jsr/std__internal/1.0.14.tgz}
+
+  '@jsr/std__path@1.1.6':
+    resolution: {integrity: sha512-H1Cmg6z8jFyIsQbVV+vZB4eOx4k6Qg8lyUM6l7nZysj5MZumg89kb0M1bsPBTGQis3fw6mJFkJELo5+AK6oCFA==, tarball: https://npm.jsr.io/~/11/@jsr/std__path/1.1.6.tgz}
 
   '@oxc-project/runtime@0.153.0':
     resolution: {integrity: sha512-rXJvtlsVG4xJNq64hiaUTIatE7jbBgpa6l4QgmEa2jLgT3ULH9scUBkpsC9N1DfmqixLEyT6DuK6OSXozziIlw==}
@@ -1951,7 +1966,49 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
+  '@jsr/huuma__route@0.2.2':
+    dependencies:
+      '@jsr/std__path': 1.1.6
+
   '@jsr/huuma__route@0.3.1': {}
+
+  '@jsr/huuma__ui@0.3.0-beta.3(@types/node@24.19.2)(esbuild@0.28.2)':
+    dependencies:
+      '@jsr/huuma__route': 0.3.1
+      '@jsr/huuma__validate': 0.2.1
+      vite: '@voidzero-dev/vite-plus-core@1.1.0(@types/node@24.19.2)(esbuild@0.28.2)'
+    transitivePeerDependencies:
+      - '@arethetypeswrong/core'
+      - '@types/node'
+      - '@typescript/native-preview'
+      - '@vitejs/devtools'
+      - '@volar/typescript'
+      - '@vue/language-core'
+      - esbuild
+      - jiti
+      - less
+      - publint
+      - sass
+      - sass-embedded
+      - stylus
+      - sugarss
+      - terser
+      - tsx
+      - typescript
+      - unplugin-unused
+      - unrun
+      - vue-tsc
+      - yaml
+
+  '@jsr/huuma__validate@0.2.1':
+    dependencies:
+      '@jsr/huuma__route': 0.2.2
+
+  '@jsr/std__internal@1.0.14': {}
+
+  '@jsr/std__path@1.1.6':
+    dependencies:
+      '@jsr/std__internal': 1.0.14
 
   '@oxc-project/runtime@0.153.0': {}
 
