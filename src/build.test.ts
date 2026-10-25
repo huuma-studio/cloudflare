@@ -218,6 +218,76 @@ test(
   STARTUP,
 );
 
+// The `config` option, as settings or as a function of wrangler.jsonc's:
+// they reach the wrangler.json that's deployed, with Huuma's Worker as
+// `main` unless wrangler.jsonc or the option names the app's own.
+describe("the `config` option", () => {
+  const OWN = "huuma-fixture-own-worker";
+  const VARS = { FROM_CONFIG: "yes" };
+  const withMain = JSON.stringify({ ...JSON.parse(WRANGLER), main: "./worker.js" });
+
+  test.for([
+    { name: "settings, without `main`", config: { vars: VARS }, wrangler: WRANGLER, own: false },
+    {
+      name: "a function, without `main`",
+      config: (worker: { name?: string }) => ({ vars: { ...VARS, NAME: worker.name! } }),
+      wrangler: WRANGLER,
+      own: false,
+    },
+    { name: "settings, with `main`", config: { vars: VARS }, wrangler: withMain, own: true },
+    {
+      name: "a function, with `main`",
+      config: (worker: { name?: string }) => ({ vars: { ...VARS, NAME: worker.name! } }),
+      wrangler: withMain,
+      own: true,
+    },
+    {
+      name: "settings naming `main`",
+      config: { vars: VARS, main: "./worker.js" },
+      wrangler: WRANGLER,
+      own: true,
+    },
+  ])("$name", async ({ config, wrangler, own }) => {
+    const root = await buildFixture(
+      ".tmp-build-cloudflare-config-",
+      { plugins: [huuma({ adapter: cloudflare({ inspectorPort: false, config }) })] },
+      {
+        "wrangler.jsonc": wrangler,
+        // The app's own Worker, which the build only uses if it's `main`.
+        "worker.js": [
+          'import huuma from "virtual:huuma/worker";',
+          "",
+          "export default {",
+          "  fetch: (request, env, ctx) => huuma.fetch(request, env, ctx),",
+          `  scheduled: () => console.log("${OWN}"),`,
+          "};",
+          "",
+        ].join("\n"),
+      },
+    );
+    try {
+      const deployed = JSON.parse(
+        await readFile(join(root, "dist/server/wrangler.json"), "utf8"),
+      ) as { name: string; vars: Record<string, string> };
+      // The function gets wrangler.jsonc's config.
+      expect(deployed.vars).toStrictEqual(
+        typeof config === "function" ? { ...VARS, NAME: "huuma-fixture" } : VARS,
+      );
+      // wrangler.jsonc's other settings stay.
+      expect(deployed.name).toStrictEqual("huuma-fixture");
+      const files = await readdir(join(root, "dist/server"), { recursive: true });
+      const server = await Promise.all(
+        files
+          .filter((file) => file.endsWith(".js"))
+          .map((file) => readFile(join(root, "dist/server", file), "utf8")),
+      );
+      expect(server.some((code) => code.includes(OWN))).toStrictEqual(own);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 test("writes Workers' files to dist/client, for the hashed files", async () => {
   const root = await buildFixture(
     ".tmp-build-cloudflare-files-",
