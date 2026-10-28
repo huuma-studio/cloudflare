@@ -5,14 +5,39 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vite-plus/test"
 import { huuma } from "@huuma/ui/vite";
 import { baseDirectory } from "@huuma/ui/vite/adapter";
 import { createBuilder, type Plugin } from "vite";
+import { spawnSync } from "node:child_process";
 import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { buildFixture, IMAGE_PAGE, startWorker } from "../test/build.ts";
+import {
+  buildFixture,
+  CHAT_ROOM,
+  CHAT_ROOM_CONFIG,
+  IMAGE_PAGE,
+  startWorker,
+  wranglerCli,
+} from "../test/build.ts";
 import { remoteEndpoint } from "../test/remote.ts";
 import { cloudflare } from "./mod.ts";
 
 type Manifest = Record<string, { file: string }>;
+
+// The names the built Worker, `dist/server/index.js`, exports, from its
+// last `export { … }`: Node can't import it, as it imports `cloudflare:*`.
+async function workerExports(root: string): Promise<string[]> {
+  const code = await readFile(join(root, "dist/server/index.js"), "utf8");
+  const list = [...code.matchAll(/^export \{([^}]*)\};?$/gm)].at(-1)?.[1] ?? "";
+  return list
+    .split(",")
+    .map((name) =>
+      name
+        .trim()
+        .split(/\s+as\s+/)
+        .at(-1)!,
+    )
+    .filter(Boolean)
+    .sort();
+}
 
 const IMMUTABLE = "public, max-age=31536000, immutable";
 
@@ -77,6 +102,10 @@ function describeWorker(name: string, base: string) {
       ) as { main: string; assets: { directory: string } };
       expect(config.assets.directory).toStrictEqual("../client");
       expect(await readdir(join(root, "dist/server"))).not.toContain("server.js");
+    });
+
+    test("exports only the app, from a server.ts with only a default export", async () => {
+      expect(await workerExports(root)).toStrictEqual(["default"]);
     });
 
     test("renders pages, through the app's middleware", async () => {
@@ -170,6 +199,128 @@ describeWorker("a Cloudflare Worker below a base", "/shop/");
 
 // In the directory `sale%`, which the rules in `_headers` name encoded.
 describeWorker("a Cloudflare Worker below an encoded base", "/sale%25/");
+
+// Cloudflare finds Durable Objects as named exports of the Worker, which
+// re-exports server.ts.
+describe("a Durable Object that server.ts exports", () => {
+  let root: string;
+  let stop: (() => void) | undefined;
+  let origin: string;
+  const nodeEnv = process.env.NODE_ENV;
+
+  beforeAll(async () => {
+    process.env.NODE_ENV = "production";
+    root = await buildFixture(
+      ".tmp-build-cloudflare-do-",
+      {},
+      {
+        ...CHAT_ROOM,
+        "wrangler.jsonc": JSON.stringify({ ...JSON.parse(WRANGLER), ...CHAT_ROOM_CONFIG }),
+      },
+    );
+    ({ origin, stop } = await startWorker(root));
+  }, STARTUP);
+  afterAll(async () => {
+    process.env.NODE_ENV = nodeEnv;
+    stop?.();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("is an export of the built Worker, next to the app", async () => {
+    expect(await workerExports(root)).toStrictEqual(["ChatRoom", "default"]);
+  });
+
+  test("runs in workerd, with its storage", async () => {
+    expect(await (await fetch(`${origin}/chat`)).text()).toStrictEqual("ada #1");
+    expect(await (await fetch(`${origin}/chat`)).text()).toStrictEqual("ada #2");
+    // The app's pages, next to it.
+    expect(await (await fetch(`${origin}/about`)).text()).toContain("<h1>About</h1>");
+  });
+
+  test(
+    "deploys, as far as `wrangler deploy --dry-run` checks",
+    () => {
+      const deploy = spawnSync(
+        process.execPath,
+        [wranglerCli(), "deploy", "--dry-run", "--config", "dist/server/wrangler.json"],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: { ...process.env, WRANGLER_SEND_METRICS: "false", WRANGLER_LOG_PATH: root },
+        },
+      );
+      expect(deploy.status, deploy.stdout + deploy.stderr).toStrictEqual(0);
+      expect(deploy.stdout).toContain("env.CHAT_ROOM (ChatRoom)");
+    },
+    STARTUP,
+  );
+});
+
+describe("the classes the Worker's config binds", () => {
+  const binds = JSON.stringify({
+    ...JSON.parse(WRANGLER),
+    ...CHAT_ROOM_CONFIG,
+    workflows: [
+      { name: "import-run", binding: "IMPORT_RUN", class_name: "ImportRun" },
+      // Another Worker's, which exports it.
+      { name: "billing", binding: "BILLING", class_name: "Billing", script_name: "billing" },
+    ],
+  });
+
+  test("fail the build without an export, naming each class and server.ts", async () => {
+    await expect(
+      buildFixture(".tmp-build-cloudflare-missing-", {}, { "wrangler.jsonc": binds }),
+    ).rejects.toThrow(
+      'wrangler.jsonc binds the Durable Object class "ChatRoom", but the Worker doesn\'t ' +
+        'export it. Export it from server.ts, e.g. `export { ChatRoom } from "./chat-room.ts";`\n' +
+        'wrangler.jsonc binds the Workflow class "ImportRun", but the Worker doesn\'t export ' +
+        'it. Export it from server.ts, e.g. `export { ImportRun } from "./import-run.ts";`',
+    );
+  });
+
+  test("fail the build of the app's own `main` without an export, naming it", async () => {
+    const error = await buildFixture(
+      ".tmp-build-cloudflare-missing-main-",
+      {},
+      {
+        "wrangler.jsonc": JSON.stringify({ ...JSON.parse(binds), main: "./worker.js" }),
+        // Huuma's Worker exports server.ts's classes, but this Worker doesn't pass them on.
+        "worker.js": 'import huuma from "virtual:huuma/worker";\nexport default huuma;\n',
+      },
+    ).catch((error: unknown) => error);
+    expect(String(error)).toContain(
+      'wrangler.jsonc binds the Durable Object class "ChatRoom", but the Worker doesn\'t ' +
+        "export it. Export it from worker.js,",
+    );
+    expect(String(error)).not.toContain('"Billing"');
+  });
+
+  test("builds the app's own `main` that passes on server.ts's exports", async () => {
+    const root = await buildFixture(
+      ".tmp-build-cloudflare-own-do-",
+      {},
+      {
+        ...CHAT_ROOM,
+        "wrangler.jsonc": JSON.stringify({
+          ...JSON.parse(WRANGLER),
+          ...CHAT_ROOM_CONFIG,
+          main: "./worker.js",
+        }),
+        "worker.js": [
+          'import huuma from "virtual:huuma/worker";',
+          'export * from "virtual:huuma/worker";',
+          "export default { fetch: (request, env, ctx) => huuma.fetch(request, env, ctx) };",
+          "",
+        ].join("\n"),
+      },
+    );
+    try {
+      expect(await workerExports(root)).toStrictEqual(["ChatRoom", "default"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 // A Worker of the app's own, e.g. for more than HTTP, which passes the
 // app's requests to Huuma's.

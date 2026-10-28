@@ -2,7 +2,7 @@
 // workerd with `wrangler dev`.
 import { createBuilder, type InlineConfig } from "vite";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
@@ -44,8 +44,51 @@ export const IMAGE_PAGE: Record<string, string> = {
 };
 
 /**
+ * A Durable Object, `ChatRoom`, that `server.ts` exports next to the app,
+ * for `buildFixture()`'s `files`. `/chat` joins the room `lobby`, whose
+ * count of guests is in the object's storage. The Worker's config needs
+ * `CHAT_ROOM_CONFIG`.
+ */
+export const CHAT_ROOM: Record<string, string> = {
+  "chat-room.ts": [
+    'import { DurableObject } from "cloudflare:workers";',
+    "",
+    "export class ChatRoom extends DurableObject {",
+    "  async join(name) {",
+    '    const guests = ((await this.ctx.storage.get("guests")) ?? 0) + 1;',
+    '    await this.ctx.storage.put("guests", guests);',
+    "    return `${name} #${guests}`;",
+    "  }",
+    "}",
+    "",
+  ].join("\n"),
+  "server.ts": [
+    'import { createUIApp } from "@huuma/ui/server";',
+    'import Root from "./app/root.tsx";',
+    "",
+    "const app = createUIApp(Root);",
+    "app.use(async (ctx, next) => {",
+    '  if (!new URL(ctx.request.url).pathname.endsWith("/chat")) return await next();',
+    '  const room = ctx.env.CHAT_ROOM.get(ctx.env.CHAT_ROOM.idFromName("lobby"));',
+    '  return new Response(await room.join("ada"));',
+    "});",
+    "",
+    'export { ChatRoom } from "./chat-room.ts";',
+    "export default app;",
+    "",
+  ].join("\n"),
+};
+
+/** The Worker's config for `CHAT_ROOM`: its binding and migration. */
+export const CHAT_ROOM_CONFIG = {
+  durable_objects: { bindings: [{ name: "CHAT_ROOM", class_name: "ChatRoom" }] },
+  migrations: [{ tag: "v1", new_sqlite_classes: ["ChatRoom"] }],
+};
+
+/**
  * Builds a copy of the basic fixture with `vite build`'s builder, with
- * `files` added to it first (contents by path).
+ * `files` added to it first (contents by path). If the build fails, the
+ * copy is removed.
  */
 export async function buildFixture(
   prefix: string,
@@ -58,15 +101,31 @@ export async function buildFixture(
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), contents);
   }
-  const builder = await createBuilder({
-    root,
-    configFile: false,
-    logLevel: "silent",
-    plugins: [huuma({ adapter: cloudflare({ inspectorPort: false }) })],
-    ...config,
-  });
-  await builder.buildApp();
+  try {
+    const builder = await createBuilder({
+      root,
+      configFile: false,
+      logLevel: "silent",
+      plugins: [huuma({ adapter: cloudflare({ inspectorPort: false }) })],
+      ...config,
+    });
+    await builder.buildApp();
+  } catch (error) {
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
   return root;
+}
+
+/**
+ * Wrangler's CLI, which its package exports don't include, to run with
+ * Node.
+ */
+export function wranglerCli(): string {
+  return join(
+    dirname(createRequire(import.meta.url).resolve("wrangler/package.json")),
+    "bin/wrangler.js",
+  );
 }
 
 /**
@@ -76,15 +135,10 @@ export async function buildFixture(
  */
 export async function startWorker(root: string): Promise<{ origin: string; stop: () => void }> {
   const [port, inspectorPort] = [await freePort(), await freePort()];
-  // The CLI, which wrangler's package exports don't include.
-  const wrangler = join(
-    dirname(createRequire(import.meta.url).resolve("wrangler/package.json")),
-    "bin/wrangler.js",
-  );
   const server = spawn(
     process.execPath,
     [
-      wrangler,
+      wranglerCli(),
       "dev",
       "--config",
       "dist/server/wrangler.json",

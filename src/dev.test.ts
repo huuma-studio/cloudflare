@@ -2,53 +2,19 @@
 // server code in workerd: Huuma leaves it the requests, and the plugin
 // runs `virtual:huuma/worker`, the adapter's `main`.
 import { afterAll, beforeAll, describe, expect, test, vi } from "vite-plus/test";
-import { huuma } from "@huuma/ui/vite";
-import { createServer, type ViteDevServer } from "vite";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import type { ViteDevServer } from "vite";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Browser } from "playwright-core";
 
 import { button, findChromium, launchChromium, open } from "../test/browser.ts";
-import { fixtures, freePort } from "../test/build.ts";
+import { startDev } from "../test/dev.ts";
 import { remoteEndpoint } from "../test/remote.ts";
-import { cloudflare } from "./mod.ts";
 
 // Starting workerd takes a few seconds.
 const STARTUP = 60_000;
 
 const chromium = findChromium();
-
-/**
- * Starts the dev server on a copy of the basic fixture, inside
- * test/fixtures so `@huuma/ui` and this package resolve from this repo's
- * node_modules; some tests edit it. The Worker has a KV namespace, local to the dev server.
- */
-async function startDev(
-  prefix: string,
-  base = "/",
-): Promise<{ root: string; server: ViteDevServer }> {
-  const root = await mkdtemp(join(fixtures, prefix));
-  await cp(join(fixtures, "basic"), root, { recursive: true });
-  await writeFile(
-    join(root, "wrangler.jsonc"),
-    JSON.stringify({
-      name: "huuma-fixture",
-      compatibility_date: "2026-10-01",
-      kv_namespaces: [{ binding: "KV", id: "huuma-fixture" }],
-    }),
-  );
-  const server = await createServer({
-    root,
-    base,
-    configFile: false,
-    logLevel: "silent",
-    // A fixed port, which a restart keeps.
-    server: { host: "127.0.0.1", port: await freePort(), strictPort: true },
-    plugins: [huuma({ adapter: cloudflare({ inspectorPort: false }) })],
-  });
-  await server.listen();
-  return { root, server };
-}
 
 describe("vite dev in workerd", () => {
   let root: string;
