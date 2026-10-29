@@ -11,10 +11,10 @@ import { join } from "node:path";
 
 import {
   buildFixture,
-  CHAT_ROOM,
-  CHAT_ROOM_CONFIG,
   IMAGE_PAGE,
   startWorker,
+  WORKER_CLASSES,
+  WORKER_CLASSES_CONFIG,
   wranglerCli,
 } from "../test/build.ts";
 import { remoteEndpoint } from "../test/remote.ts";
@@ -200,9 +200,9 @@ describeWorker("a Cloudflare Worker below a base", "/shop/");
 // In the directory `sale%`, which the rules in `_headers` name encoded.
 describeWorker("a Cloudflare Worker below an encoded base", "/sale%25/");
 
-// Cloudflare finds Durable Objects as named exports of the Worker, which
-// re-exports server.ts.
-describe("a Durable Object that server.ts exports", () => {
+// Cloudflare finds Durable Objects, Workflows and named entrypoints as
+// named exports of the Worker, which re-exports server.ts.
+describe("the Durable Object, Workflow and named entrypoint that server.ts exports", () => {
   let root: string;
   let stop: (() => void) | undefined;
   let origin: string;
@@ -214,8 +214,8 @@ describe("a Durable Object that server.ts exports", () => {
       ".tmp-build-cloudflare-do-",
       {},
       {
-        ...CHAT_ROOM,
-        "wrangler.jsonc": JSON.stringify({ ...JSON.parse(WRANGLER), ...CHAT_ROOM_CONFIG }),
+        ...WORKER_CLASSES,
+        "wrangler.jsonc": JSON.stringify({ ...JSON.parse(WRANGLER), ...WORKER_CLASSES_CONFIG }),
       },
     );
     ({ origin, stop } = await startWorker(root));
@@ -226,14 +226,34 @@ describe("a Durable Object that server.ts exports", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  test("is an export of the built Worker, next to the app", async () => {
-    expect(await workerExports(root)).toStrictEqual(["ChatRoom", "default"]);
+  test("are exports of the built Worker, next to the app", async () => {
+    expect(await workerExports(root)).toStrictEqual([
+      "ChatRoom",
+      "Greeter",
+      "ImportRun",
+      "default",
+    ]);
   });
 
-  test("runs in workerd, with its storage", async () => {
+  test("run in workerd, through their bindings", async () => {
+    // The Durable Object, with its storage.
     expect(await (await fetch(`${origin}/chat`)).text()).toStrictEqual("ada #1");
     expect(await (await fetch(`${origin}/chat`)).text()).toStrictEqual("ada #2");
-    // The app's pages, next to it.
+    // The Workflow, to the end.
+    const { id } = (await (await fetch(`${origin}/import`, { method: "POST" })).json()) as {
+      id: string;
+    };
+    await vi.waitFor(
+      async () =>
+        expect(await (await fetch(`${origin}/import/${id}`)).json()).toMatchObject({
+          status: "complete",
+          output: 6,
+        }),
+      { timeout: 10_000 },
+    );
+    // The named entrypoint.
+    expect(await (await fetch(`${origin}/greet`)).text()).toStrictEqual("Hello, ada");
+    // The app's pages, next to them.
     expect(await (await fetch(`${origin}/about`)).text()).toContain("<h1>About</h1>");
   });
 
@@ -251,6 +271,8 @@ describe("a Durable Object that server.ts exports", () => {
       );
       expect(deploy.status, deploy.stdout + deploy.stderr).toStrictEqual(0);
       expect(deploy.stdout).toContain("env.CHAT_ROOM (ChatRoom)");
+      expect(deploy.stdout).toContain("env.IMPORT_RUN (ImportRun)");
+      expect(deploy.stdout).toContain("env.GREETER (huuma-fixture#Greeter)");
     },
     STARTUP,
   );
@@ -259,11 +281,17 @@ describe("a Durable Object that server.ts exports", () => {
 describe("the classes the Worker's config binds", () => {
   const binds = JSON.stringify({
     ...JSON.parse(WRANGLER),
-    ...CHAT_ROOM_CONFIG,
+    ...WORKER_CLASSES_CONFIG,
     workflows: [
-      { name: "import-run", binding: "IMPORT_RUN", class_name: "ImportRun" },
+      ...WORKER_CLASSES_CONFIG.workflows,
       // Another Worker's, which exports it.
       { name: "billing", binding: "BILLING", class_name: "Billing", script_name: "billing" },
+    ],
+    services: [
+      ...WORKER_CLASSES_CONFIG.services,
+      // Another Worker's, and this one's default export.
+      { binding: "AUTH", service: "auth", entrypoint: "Auth" },
+      { binding: "SELF", service: "huuma-fixture" },
     ],
   });
 
@@ -274,8 +302,25 @@ describe("the classes the Worker's config binds", () => {
       'wrangler.jsonc binds the Durable Object class "ChatRoom", but the Worker doesn\'t ' +
         'export it. Export it from server.ts, e.g. `export { ChatRoom } from "./chat-room.ts";`\n' +
         'wrangler.jsonc binds the Workflow class "ImportRun", but the Worker doesn\'t export ' +
-        'it. Export it from server.ts, e.g. `export { ImportRun } from "./import-run.ts";`',
+        'it. Export it from server.ts, e.g. `export { ImportRun } from "./import-run.ts";`\n' +
+        'wrangler.jsonc binds the WorkerEntrypoint class "Greeter", but the Worker doesn\'t ' +
+        'export it. Export it from server.ts, e.g. `export { Greeter } from "./greeter.ts";`',
     );
+  });
+
+  test("fail the build without an export, naming Huuma's `server` entry", async () => {
+    await expect(
+      buildFixture(
+        ".tmp-build-cloudflare-missing-entry-",
+        {
+          plugins: [huuma({ server: "entry.ts", adapter: cloudflare({ inspectorPort: false }) })],
+        },
+        {
+          "wrangler.jsonc": binds,
+          "entry.ts": 'export { default } from "./server.ts";\n',
+        },
+      ),
+    ).rejects.toThrow('Export it from entry.ts, e.g. `export { ChatRoom } from "./chat-room.ts";`');
   });
 
   test("fail the build of the app's own `main` without an export, naming it", async () => {
@@ -293,17 +338,18 @@ describe("the classes the Worker's config binds", () => {
         "export it. Export it from worker.js,",
     );
     expect(String(error)).not.toContain('"Billing"');
+    expect(String(error)).not.toContain('"Auth"');
   });
 
-  test("builds the app's own `main` that passes on server.ts's exports", async () => {
+  test("build the app's own `main` that passes on server.ts's exports", async () => {
     const root = await buildFixture(
       ".tmp-build-cloudflare-own-do-",
       {},
       {
-        ...CHAT_ROOM,
+        ...WORKER_CLASSES,
         "wrangler.jsonc": JSON.stringify({
           ...JSON.parse(WRANGLER),
-          ...CHAT_ROOM_CONFIG,
+          ...WORKER_CLASSES_CONFIG,
           main: "./worker.js",
         }),
         "worker.js": [
@@ -315,7 +361,12 @@ describe("the classes the Worker's config binds", () => {
       },
     );
     try {
-      expect(await workerExports(root)).toStrictEqual(["ChatRoom", "default"]);
+      expect(await workerExports(root)).toStrictEqual([
+        "ChatRoom",
+        "Greeter",
+        "ImportRun",
+        "default",
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

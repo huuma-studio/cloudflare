@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 import { createServer, type RunnableDevEnvironment, type ViteDevServer } from "vite";
 import { huuma } from "@huuma/ui/vite";
+import { cp, mkdtemp, rename, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { fixtures } from "../test/build.ts";
 
 import { WORKER_ID, workerModule, workerPlugin } from "./worker.ts";
 
@@ -45,21 +49,28 @@ describe("the Worker entry in dev", () => {
 });
 
 describe("the Worker entry in dev, without an export the Worker's config needs", () => {
+  // A copy of the basic fixture whose server entry is `entry.ts`, named by
+  // Huuma's `server` option.
+  let root: string;
   let server: ViteDevServer;
   beforeAll(async () => {
+    root = await mkdtemp(join(fixtures, ".tmp-worker-checks-"));
+    await cp(fixture, root, { recursive: true });
+    await rename(join(root, "server.ts"), join(root, "entry.ts"));
     server = await createServer({
-      root: fixture,
+      root,
       configFile: false,
       logLevel: "silent",
       server: { middlewareMode: true, ws: false },
       plugins: [
         huuma({
+          server: "entry.ts",
           adapter: {
             name: "test",
             plugins: [
               workerPlugin(() => [
-                { name: "ChatRoom", message: "Export ChatRoom." },
-                { name: "ImportRun", message: "Export ImportRun." },
+                { name: "ChatRoom", message: (entry) => `Export ChatRoom from ${entry}.` },
+                { name: "ImportRun", message: (entry) => `Export ImportRun from ${entry}.` },
               ]),
             ],
           },
@@ -69,12 +80,13 @@ describe("the Worker entry in dev, without an export the Worker's config needs",
   });
   afterAll(async () => {
     await server.close();
+    await rm(root, { recursive: true, force: true });
   });
 
-  test("fails with the message of each export the app's server entry lacks", async () => {
+  test("fails with the message of each export the app's server entry lacks, naming it", async () => {
     const ssr = server.environments.ssr as RunnableDevEnvironment;
     await expect(ssr.runner.import(WORKER_ID)).rejects.toThrow(
-      new Error("Export ChatRoom.\nExport ImportRun."),
+      new Error("Export ChatRoom from entry.ts.\nExport ImportRun from entry.ts."),
     );
   });
 });

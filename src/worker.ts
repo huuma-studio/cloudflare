@@ -1,4 +1,5 @@
-import type { Plugin } from "vite";
+import type { DevEnvironment, Plugin } from "vite";
+import { relative } from "node:path";
 import { appBase, SERVER_ID, SERVER_READY } from "@huuma/ui/vite/adapter";
 
 /**
@@ -19,10 +20,19 @@ export interface ExportCheck {
 }
 
 /**
+ * A named export the Worker must have in dev, and the error without it,
+ * given the app's server entry relative to the root, e.g. `server.ts`.
+ */
+export interface DevExportCheck {
+  name: string;
+  message: (serverEntry: string) => string;
+}
+
+/**
  * Serves `virtual:huuma/worker`. In dev, it fails with the message of each
  * of `checks()` whose export the app's server entry lacks.
  */
-export function workerPlugin(checks: () => readonly ExportCheck[] = () => []): Plugin {
+export function workerPlugin(checks: () => readonly DevExportCheck[] = () => []): Plugin {
   return {
     name: "huuma:worker",
     resolveId: {
@@ -33,21 +43,41 @@ export function workerPlugin(checks: () => readonly ExportCheck[] = () => []): P
     },
     load: {
       filter: { id: new RegExp(`^\0${WORKER_ID}$`) },
-      handler() {
+      async handler() {
         if (this.environment.config.consumer !== "server") {
           this.error(`${WORKER_ID} is the app as a Worker and is server only.`);
         }
         const config = this.environment.getTopLevelConfig();
-        const dev = this.environment.mode === "dev";
+        if (this.environment.mode !== "dev") {
+          return { code: workerModule(appBase(config.base)), moduleType: "js" };
+        }
+        let devChecks: ExportCheck[] = [];
+        const own = checks();
+        if (own.length) {
+          const entry = await serverEntry(this.environment as DevEnvironment);
+          devChecks = own.map(({ name, message }) => ({ name, message: message(entry) }));
+        }
         return {
-          code: dev
-            ? workerModule(appBase(config.base), config.base, checks())
-            : workerModule(appBase(config.base)),
+          code: workerModule(appBase(config.base), config.base, devChecks),
           moduleType: "js",
         };
       },
     },
   };
+}
+
+/**
+ * The app's server entry in dev, relative to the root: `server.ts`, or the
+ * file Huuma's `server` option names. It's what `virtual:huuma/server`
+ * imports first.
+ */
+async function serverEntry(environment: DevEnvironment): Promise<string> {
+  await environment.transformRequest(SERVER_ID);
+  const node = await environment.moduleGraph.getModuleByUrl(SERVER_ID);
+  const entry = node && [...node.importedModules][0]?.id;
+  return entry
+    ? relative(environment.getTopLevelConfig().root, entry).replaceAll("\\", "/")
+    : "server.ts";
 }
 
 /**

@@ -26,6 +26,20 @@ describe(workerClasses.name, () => {
     ]);
   });
 
+  test("lists the named entrypoints that bind the Worker itself", () => {
+    expect(
+      workerClasses({
+        name: "shop",
+        services: [
+          { service: "shop", entrypoint: "Greeter" },
+          // The Worker's default export, and another Worker's entrypoint.
+          { service: "shop" },
+          { service: "auth", entrypoint: "Auth" },
+        ],
+      }),
+    ).toStrictEqual([{ kind: "WorkerEntrypoint", name: "Greeter" }]);
+  });
+
   test("is empty without classes", () => {
     expect(workerClasses({ name: "shop" })).toStrictEqual([]);
     expect(workerClasses({ durable_objects: {}, workflows: [] })).toStrictEqual([]);

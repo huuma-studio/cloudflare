@@ -44,12 +44,21 @@ export const IMAGE_PAGE: Record<string, string> = {
 };
 
 /**
- * A Durable Object, `ChatRoom`, that `server.ts` exports next to the app,
- * for `buildFixture()`'s `files`. `/chat` joins the room `lobby`, whose
- * count of guests is in the object's storage. The Worker's config needs
- * `CHAT_ROOM_CONFIG`.
+ * The classes Cloudflare finds as named exports of the Worker, which
+ * `server.ts` exports next to the app, for `buildFixture()`'s `files`: a
+ * Durable Object, `ChatRoom`, a Workflow, `ImportRun`, and a named
+ * entrypoint, `Greeter`. The app calls each through its binding:
+ *
+ * - `/chat` joins the room `lobby`, whose count of guests is in the
+ *   object's storage: `ada #1`, `ada #2`, …
+ * - `POST /import` starts a run for 3 rows and responds with its id;
+ *   `/import/<id>` with its status, whose output is the rows doubled.
+ * - `/greet` responds with `Greeter`'s `greet("ada")`.
+ *
+ * The Worker's config needs `WORKER_CLASSES_CONFIG`, with the Worker's
+ * name `huuma-fixture`, which `GREETER` binds.
  */
-export const CHAT_ROOM: Record<string, string> = {
+export const WORKER_CLASSES: Record<string, string> = {
   "chat-room.ts": [
     'import { DurableObject } from "cloudflare:workers";',
     "",
@@ -62,27 +71,61 @@ export const CHAT_ROOM: Record<string, string> = {
     "}",
     "",
   ].join("\n"),
+  "import-run.ts": [
+    'import { WorkflowEntrypoint } from "cloudflare:workers";',
+    "",
+    "export class ImportRun extends WorkflowEntrypoint {",
+    "  async run(event, step) {",
+    '    return await step.do("double", async () => event.payload.rows * 2);',
+    "  }",
+    "}",
+    "",
+  ].join("\n"),
+  "greeter.ts": [
+    'import { WorkerEntrypoint } from "cloudflare:workers";',
+    "",
+    "export class Greeter extends WorkerEntrypoint {",
+    "  greet(name) {",
+    "    return `Hello, ${name}`;",
+    "  }",
+    "}",
+    "",
+  ].join("\n"),
   "server.ts": [
     'import { createUIApp } from "@huuma/ui/server";',
     'import Root from "./app/root.tsx";',
     "",
     "const app = createUIApp(Root);",
     "app.use(async (ctx, next) => {",
-    '  if (!new URL(ctx.request.url).pathname.endsWith("/chat")) return await next();',
-    '  const room = ctx.env.CHAT_ROOM.get(ctx.env.CHAT_ROOM.idFromName("lobby"));',
-    '  return new Response(await room.join("ada"));',
+    "  const path = new URL(ctx.request.url).pathname;",
+    '  if (path.endsWith("/chat")) {',
+    '    const room = ctx.env.CHAT_ROOM.get(ctx.env.CHAT_ROOM.idFromName("lobby"));',
+    '    return new Response(await room.join("ada"));',
+    "  }",
+    '  if (path.endsWith("/import") && ctx.request.method === "POST") {',
+    "    const run = await ctx.env.IMPORT_RUN.create({ params: { rows: 3 } });",
+    "    return Response.json({ id: run.id });",
+    "  }",
+    "  const id = /\\/import\\/([^/]+)$/.exec(path)?.[1];",
+    "  if (id) return Response.json(await (await ctx.env.IMPORT_RUN.get(id)).status());",
+    '  if (path.endsWith("/greet")) return new Response(await ctx.env.GREETER.greet("ada"));',
+    "  return await next();",
     "});",
     "",
     'export { ChatRoom } from "./chat-room.ts";',
+    'export { ImportRun } from "./import-run.ts";',
+    'export { Greeter } from "./greeter.ts";',
     "export default app;",
     "",
   ].join("\n"),
 };
 
-/** The Worker's config for `CHAT_ROOM`: its binding and migration. */
-export const CHAT_ROOM_CONFIG = {
+/** The Worker's config for `WORKER_CLASSES`: their bindings and the migration. */
+export const WORKER_CLASSES_CONFIG = {
   durable_objects: { bindings: [{ name: "CHAT_ROOM", class_name: "ChatRoom" }] },
   migrations: [{ tag: "v1", new_sqlite_classes: ["ChatRoom"] }],
+  workflows: [{ name: "import-run", binding: "IMPORT_RUN", class_name: "ImportRun" }],
+  services: [{ binding: "GREETER", service: "huuma-fixture", entrypoint: "Greeter" }],
 };
 
 /**

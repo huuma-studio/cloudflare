@@ -44,6 +44,8 @@ const app = createUIApp(Root);
 export { ChatRoom } from "./src/chat-room.ts";
 // Workflows
 export { ImportRun } from "./src/import-run.ts";
+// Named entrypoints (`WorkerEntrypoint` classes)
+export { Greeter } from "./src/greeter.ts";
 
 export default app;
 ```
@@ -56,18 +58,19 @@ export default app;
   "durable_objects": { "bindings": [{ "name": "CHAT_ROOM", "class_name": "ChatRoom" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChatRoom"] }],
   "workflows": [{ "name": "import-run", "binding": "IMPORT_RUN", "class_name": "ImportRun" }],
+  "services": [{ "binding": "GREETER", "service": "my-app", "entrypoint": "Greeter" }],
 }
 ```
 
 Server code reaches them through the bindings, e.g. `requestContext().env.CHAT_ROOM`.
 
-If `wrangler.jsonc` binds a Durable Object or Workflow class that the Worker doesn't export, `vite` and `vite build` fail and name it, instead of workerd's `Class extends value undefined is not a constructor or null`:
+If `wrangler.jsonc` binds a Durable Object or Workflow class, or a named entrypoint of the Worker itself, that the Worker doesn't export, `vite` and `vite build` fail and name it, along with the app's server entry (`server.ts`, or the file Huuma's `server` option names), instead of workerd's `Class extends value undefined is not a constructor or null`:
 
 ```
 wrangler.jsonc binds the Durable Object class "ChatRoom", but the Worker doesn't export it. Export it from server.ts, e.g. `export { ChatRoom } from "./chat-room.ts";`
 ```
 
-Bindings with another Worker's `script_name` aren't checked; that Worker exports the class.
+Bindings of another Worker's classes, with its `script_name` or `service`, aren't checked; that Worker exports them.
 
 A Worker of the app's own is still possible, e.g. for `scheduled` or `queue` handlers, which the adapter's Worker doesn't have: name it as `main` in `wrangler.jsonc` and pass the requests to the app.
 

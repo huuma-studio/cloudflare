@@ -1,6 +1,6 @@
 /*
- * Cloudflare finds a Worker's Durable Object and Workflow classes as named
- * exports of its main module. Huuma's Worker re-exports the app's server
+ * Cloudflare finds a Worker's Durable Object and Workflow classes and its
+ * named entrypoints as named exports of its main module. Huuma's Worker re-exports the app's server
  * entry, so apps export them from `server.ts`. Without one, the Worker
  * fails when it starts, with "Class extends value undefined": these
  * checks name the class instead, in the build and in dev.
@@ -13,7 +13,7 @@ import { WORKER_ID } from "./worker.ts";
 
 /** A class the Worker's config binds, which the Worker must export. */
 export interface WorkerClass {
-  kind: "Durable Object" | "Workflow";
+  kind: "Durable Object" | "Workflow" | "WorkerEntrypoint";
   name: string;
 }
 
@@ -22,6 +22,14 @@ export interface ClassesConfig {
   name?: string;
   durable_objects?: { bindings?: readonly ClassBinding[] };
   workflows?: readonly ClassBinding[];
+  services?: readonly ServiceBinding[];
+}
+
+interface ServiceBinding {
+  /** The Worker, e.g. this one. */
+  service: string;
+  /** A named entrypoint, a `WorkerEntrypoint` class the Worker exports. */
+  entrypoint?: string;
 }
 
 interface ClassBinding {
@@ -33,7 +41,8 @@ interface ClassBinding {
 /**
  * The classes the Worker's config binds that the Worker exports itself:
  * those of `durable_objects.bindings` and `workflows` without another
- * Worker's `script_name`, each once.
+ * Worker's `script_name`, and the named entrypoints of `services` that
+ * bind the Worker itself, each once.
  */
 export function workerClasses(config: ClassesConfig): WorkerClass[] {
   const own = (binding: ClassBinding) =>
@@ -48,6 +57,12 @@ export function workerClasses(config: ClassesConfig): WorkerClass[] {
   };
   add("Durable Object", config.durable_objects?.bindings);
   add("Workflow", config.workflows);
+  add(
+    "WorkerEntrypoint",
+    (config.services ?? [])
+      .filter((service) => service.entrypoint && service.service === config.name)
+      .map((service) => ({ class_name: service.entrypoint! })),
+  );
   return [...classes.values()];
 }
 

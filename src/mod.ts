@@ -9,7 +9,7 @@ import type { HuumaAdapter } from "@huuma/ui/vite/adapter";
 import { basename } from "node:path";
 
 import { type ClassesConfig, exportsCheckPlugin, missingExport, workerClasses } from "./exports.ts";
-import { type ExportCheck, WORKER_ID, workerPlugin } from "./worker.ts";
+import { type DevExportCheck, WORKER_ID, workerPlugin } from "./worker.ts";
 import { cleanClientBuild, wranglerAssetsPlugin, writeClientFiles } from "./workers.ts";
 
 /**
@@ -43,7 +43,7 @@ export function cloudflare(options: CloudflareOptions = {}): HuumaAdapter {
   // The Worker's `main`, and the classes it must export while it's
   // Huuma's, for dev.
   let main: string | undefined;
-  let checks: ExportCheck[] = [];
+  let checks: DevExportCheck[] = [];
   return {
     name: "cloudflare",
     dev: "platform",
@@ -82,12 +82,11 @@ function withMain(
   };
 }
 
-// What the Worker of `config` must export, for dev, where the app's
-// server entry is `server.ts` unless Huuma's `server` option names another.
-function exportChecks(config: ClassesConfig & { userConfigPath?: string }): ExportCheck[] {
+// What the Worker of `config` must export, for dev.
+function exportChecks(config: ClassesConfig & { userConfigPath?: string }): DevExportCheck[] {
   const configFile = basename(config.userConfigPath ?? "wrangler.jsonc");
   return workerClasses(config).map((workerClass) => ({
     name: workerClass.name,
-    message: missingExport(workerClass, configFile, "server.ts"),
+    message: (serverEntry) => missingExport(workerClass, configFile, serverEntry),
   }));
 }
