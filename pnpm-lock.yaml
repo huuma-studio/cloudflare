@@ -174,8 +174,8 @@ importers:
         specifier: ^1.64.0
         version: 1.65.0(@types/node@24.19.2)(@voidzero-dev/vite-plus-core@1.1.0(@types/node@24.19.2)(esbuild@0.28.2))(workerd@1.20261019.1)(wrangler@4.152.0(@types/node@24.19.2))
       '@huuma/ui':
-        specifier: npm:@jsr/huuma__ui@^0.3.0-beta.3
-        version: '@jsr/huuma__ui@0.3.0-beta.3(@types/node@24.19.2)(esbuild@0.28.2)'
+        specifier: npm:@jsr/huuma__ui@^0.3.0-beta.4
+        version: '@jsr/huuma__ui@0.3.0-beta.4(@types/node@24.19.2)(esbuild@0.28.2)'
     devDependencies:
       '@huuma/route':
         specifier: npm:@jsr/huuma__route@^0.3.1
@@ -609,8 +609,8 @@ packages:
   '@jsr/huuma__route@0.3.1':
     resolution: {integrity: sha512-AhX2qQhxzwiFnHgg+ZAAV7j29pVJUfnRXulAgmo9TLXZhRflfXcybKmdLo6ZP5KoVlQ8PhCPPNX+jFSmQU1dAQ==, tarball: https://npm.jsr.io/~/11/@jsr/huuma__route/0.3.1.tgz}
 
-  '@jsr/huuma__ui@0.3.0-beta.3':
-    resolution: {integrity: sha512-85Km+Vw4oNcdjVfOIO+c7wyfYkBRpZqH2hltc9+3lc6MhfJMMDed8GdRaFoEL/+gkDvh43QUHDYqiVjwGU0HLA==, tarball: https://npm.jsr.io/~/11/@jsr/huuma__ui/0.3.0-beta.3.tgz}
+  '@jsr/huuma__ui@0.3.0-beta.4':
+    resolution: {integrity: sha512-jBa9rrZFfkE5XS0JSJzzLOIu22o0B23OZjMe9j+TmOpo01l4jjJK5SgCApG3ArzU3HfciLz9WWfBpz/itpcxkg==, tarball: https://npm.jsr.io/~/11/@jsr/huuma__ui/0.3.0-beta.4.tgz}
 
   '@jsr/huuma__validate@0.2.1':
     resolution: {integrity: sha512-oW33m8qBZPr0H1gaVhtcwIgJpXhmvHZQYBIDqVmxaQaF8ZEoUwj7XpUg8muh16YU9UwBkPYFkwxYNhvQA1363Q==, tarball: https://npm.jsr.io/~/11/@jsr/huuma__validate/0.2.1.tgz}
@@ -1972,7 +1972,7 @@ snapshots:
 
   '@jsr/huuma__route@0.3.1': {}
 
-  '@jsr/huuma__ui@0.3.0-beta.3(@types/node@24.19.2)(esbuild@0.28.2)':
+  '@jsr/huuma__ui@0.3.0-beta.4(@types/node@24.19.2)(esbuild@0.28.2)':
     dependencies:
       '@jsr/huuma__route': 0.3.1
       '@jsr/huuma__validate': 0.2.1

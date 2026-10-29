@@ -2,7 +2,7 @@
 // workerd with `wrangler dev`.
 import { createBuilder, type InlineConfig } from "vite";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
@@ -44,8 +44,94 @@ export const IMAGE_PAGE: Record<string, string> = {
 };
 
 /**
+ * The classes Cloudflare finds as named exports of the Worker, which
+ * `server.ts` exports next to the app, for `buildFixture()`'s `files`: a
+ * Durable Object, `ChatRoom`, a Workflow, `ImportRun`, and a named
+ * entrypoint, `Greeter`. The app calls each through its binding:
+ *
+ * - `/chat` joins the room `lobby`, whose count of guests is in the
+ *   object's storage: `ada #1`, `ada #2`, …
+ * - `POST /import` starts a run for 3 rows and responds with its id;
+ *   `/import/<id>` with its status, whose output is the rows doubled.
+ * - `/greet` responds with `Greeter`'s `greet("ada")`.
+ *
+ * The Worker's config needs `WORKER_CLASSES_CONFIG`, with the Worker's
+ * name `huuma-fixture`, which `GREETER` binds.
+ */
+export const WORKER_CLASSES: Record<string, string> = {
+  "chat-room.ts": [
+    'import { DurableObject } from "cloudflare:workers";',
+    "",
+    "export class ChatRoom extends DurableObject {",
+    "  async join(name) {",
+    '    const guests = ((await this.ctx.storage.get("guests")) ?? 0) + 1;',
+    '    await this.ctx.storage.put("guests", guests);',
+    "    return `${name} #${guests}`;",
+    "  }",
+    "}",
+    "",
+  ].join("\n"),
+  "import-run.ts": [
+    'import { WorkflowEntrypoint } from "cloudflare:workers";',
+    "",
+    "export class ImportRun extends WorkflowEntrypoint {",
+    "  async run(event, step) {",
+    '    return await step.do("double", async () => event.payload.rows * 2);',
+    "  }",
+    "}",
+    "",
+  ].join("\n"),
+  "greeter.ts": [
+    'import { WorkerEntrypoint } from "cloudflare:workers";',
+    "",
+    "export class Greeter extends WorkerEntrypoint {",
+    "  greet(name) {",
+    "    return `Hello, ${name}`;",
+    "  }",
+    "}",
+    "",
+  ].join("\n"),
+  "server.ts": [
+    'import { createUIApp } from "@huuma/ui/server";',
+    'import Root from "./app/root.tsx";',
+    "",
+    "const app = createUIApp(Root);",
+    "app.use(async (ctx, next) => {",
+    "  const path = new URL(ctx.request.url).pathname;",
+    '  if (path.endsWith("/chat")) {',
+    '    const room = ctx.env.CHAT_ROOM.get(ctx.env.CHAT_ROOM.idFromName("lobby"));',
+    '    return new Response(await room.join("ada"));',
+    "  }",
+    '  if (path.endsWith("/import") && ctx.request.method === "POST") {',
+    "    const run = await ctx.env.IMPORT_RUN.create({ params: { rows: 3 } });",
+    "    return Response.json({ id: run.id });",
+    "  }",
+    "  const id = /\\/import\\/([^/]+)$/.exec(path)?.[1];",
+    "  if (id) return Response.json(await (await ctx.env.IMPORT_RUN.get(id)).status());",
+    '  if (path.endsWith("/greet")) return new Response(await ctx.env.GREETER.greet("ada"));',
+    "  return await next();",
+    "});",
+    "",
+    'export { ChatRoom } from "./chat-room.ts";',
+    'export { ImportRun } from "./import-run.ts";',
+    'export { Greeter } from "./greeter.ts";',
+    "export default app;",
+    "",
+  ].join("\n"),
+};
+
+/** The Worker's config for `WORKER_CLASSES`: their bindings and the migration. */
+export const WORKER_CLASSES_CONFIG = {
+  durable_objects: { bindings: [{ name: "CHAT_ROOM", class_name: "ChatRoom" }] },
+  migrations: [{ tag: "v1", new_sqlite_classes: ["ChatRoom"] }],
+  workflows: [{ name: "import-run", binding: "IMPORT_RUN", class_name: "ImportRun" }],
+  services: [{ binding: "GREETER", service: "huuma-fixture", entrypoint: "Greeter" }],
+};
+
+/**
  * Builds a copy of the basic fixture with `vite build`'s builder, with
- * `files` added to it first (contents by path).
+ * `files` added to it first (contents by path). If the build fails, the
+ * copy is removed.
  */
 export async function buildFixture(
   prefix: string,
@@ -58,15 +144,31 @@ export async function buildFixture(
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), contents);
   }
-  const builder = await createBuilder({
-    root,
-    configFile: false,
-    logLevel: "silent",
-    plugins: [huuma({ adapter: cloudflare({ inspectorPort: false }) })],
-    ...config,
-  });
-  await builder.buildApp();
+  try {
+    const builder = await createBuilder({
+      root,
+      configFile: false,
+      logLevel: "silent",
+      plugins: [huuma({ adapter: cloudflare({ inspectorPort: false }) })],
+      ...config,
+    });
+    await builder.buildApp();
+  } catch (error) {
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
   return root;
+}
+
+/**
+ * Wrangler's CLI, which its package exports don't include, to run with
+ * Node.
+ */
+export function wranglerCli(): string {
+  return join(
+    dirname(createRequire(import.meta.url).resolve("wrangler/package.json")),
+    "bin/wrangler.js",
+  );
 }
 
 /**
@@ -76,15 +178,10 @@ export async function buildFixture(
  */
 export async function startWorker(root: string): Promise<{ origin: string; stop: () => void }> {
   const [port, inspectorPort] = [await freePort(), await freePort()];
-  // The CLI, which wrangler's package exports don't include.
-  const wrangler = join(
-    dirname(createRequire(import.meta.url).resolve("wrangler/package.json")),
-    "bin/wrangler.js",
-  );
   const server = spawn(
     process.execPath,
     [
-      wrangler,
+      wranglerCli(),
       "dev",
       "--config",
       "dist/server/wrangler.json",

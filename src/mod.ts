@@ -6,7 +6,10 @@
 import { cloudflare as cloudflarePlugin, type PluginConfig } from "@cloudflare/vite-plugin";
 import type { HuumaAdapter } from "@huuma/ui/vite/adapter";
 
-import { WORKER_ID, workerPlugin } from "./worker.ts";
+import { basename } from "node:path";
+
+import { type ClassesConfig, exportsCheckPlugin, missingExport, workerClasses } from "./exports.ts";
+import { type DevExportCheck, WORKER_ID, workerPlugin } from "./worker.ts";
 import { cleanClientBuild, wranglerAssetsPlugin, writeClientFiles } from "./workers.ts";
 
 /**
@@ -32,9 +35,15 @@ export interface CloudflareOptions extends Omit<PluginConfig, "viteEnvironment">
  * The Worker is the app (`virtual:huuma/worker`), so `wrangler.jsonc`
  * needs no `main`. `vite` runs it in workerd, with the Worker's bindings,
  * and `vite build` writes it with the `wrangler.json` that `wrangler
- * deploy` deploys.
+ * deploy` deploys. It exports the named exports of the app's `server.ts`
+ * too, e.g. Durable Object classes; without a class the config binds,
+ * dev and the build fail and name it.
  */
 export function cloudflare(options: CloudflareOptions = {}): HuumaAdapter {
+  // The Worker's `main`, and the classes it must export while it's
+  // Huuma's, for dev.
+  let main: string | undefined;
+  let checks: DevExportCheck[] = [];
   return {
     name: "cloudflare",
     dev: "platform",
@@ -42,9 +51,13 @@ export function cloudflare(options: CloudflareOptions = {}): HuumaAdapter {
       cloudflarePlugin({
         ...options,
         viteEnvironment: { name: "ssr" },
-        config: withMain(options.config),
+        config: withMain(options.config, (config) => {
+          main = config.main;
+          checks = config.main === WORKER_ID ? exportChecks(config) : [];
+        }),
       }),
-      workerPlugin(),
+      workerPlugin(() => checks),
+      exportsCheckPlugin(() => main),
       wranglerAssetsPlugin(),
     ],
     beforeBuild: cleanClientBuild,
@@ -55,11 +68,25 @@ export function cloudflare(options: CloudflareOptions = {}): HuumaAdapter {
 /**
  * The app's Worker config, with Huuma's Worker as `main` unless
  * `wrangler.jsonc` or the `config` option names another, e.g. a Worker of
- * the app's that wraps it.
+ * the app's that wraps it. `resolved` gets the config with both.
  */
-function withMain(config: CloudflareOptions["config"]): NonNullable<PluginConfig["config"]> {
+function withMain(
+  config: CloudflareOptions["config"],
+  resolved: (config: ClassesConfig & { main?: string }) => void,
+): NonNullable<PluginConfig["config"]> {
   return (worker) => {
     const own = typeof config === "function" ? config(worker) : config;
-    return { ...(worker.main ? {} : { main: WORKER_ID }), ...own };
+    const overrides = { ...(worker.main ? {} : { main: WORKER_ID }), ...own };
+    resolved({ ...worker, ...overrides } as ClassesConfig & { main?: string });
+    return overrides;
   };
+}
+
+// What the Worker of `config` must export, for dev.
+function exportChecks(config: ClassesConfig & { userConfigPath?: string }): DevExportCheck[] {
+  const configFile = basename(config.userConfigPath ?? "wrangler.jsonc");
+  return workerClasses(config).map((workerClass) => ({
+    name: workerClass.name,
+    message: (serverEntry) => missingExport(workerClass, configFile, serverEntry),
+  }));
 }
