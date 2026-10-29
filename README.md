@@ -93,7 +93,7 @@ The build then checks that this Worker exports the classes `wrangler.jsonc` bind
 
 `cloudflare()` takes the options of `@cloudflare/vite-plugin`, e.g. `configPath`, `remoteBindings` or `inspectorPort`, except `viteEnvironment`. See [Cloudflare Workers](https://github.com/huuma-studio/ui/tree/next#cloudflare-workers) in Huuma UI's README for caching, the base and bindings.
 
-Needs `@huuma/ui` 0.3 with adapters (`^0.3.0-beta.3`), and for the named exports of `server.ts` the release whose `virtual:huuma/server` re-exports them.
+Needs `@huuma/ui` 0.3 with adapters and the named exports of `server.ts` (`^0.3.0-beta.4`).
 
 ## Development
 
@@ -104,4 +104,4 @@ vp test               # the browser tests need Chromium: pnpm exec playwright-co
 vp run jsr:dry-run
 ```
 
-Until `@huuma/ui` with `@huuma/ui/vite/adapter` is on JSR, `package.json` links it from `../ui`, a checkout of [huuma-studio/ui](https://github.com/huuma-studio/ui) on its `next` branch. Then it becomes `npm:@jsr/huuma__ui@^0.3.0-beta.3`, like `@huuma/route`. JSR publishes from `jsr.json`, whose import map names the JSR and npm versions; `package.json` only drives the Node tooling.
+`package.json` takes `@huuma/ui` from JSR's npm registry (`npm:@jsr/huuma__ui@^0.3.0-beta.4`), like `@huuma/route`. To try changes to `@huuma/ui` before they're released, link a checkout of [huuma-studio/ui](https://github.com/huuma-studio/ui) instead. JSR publishes from `jsr.json`, whose import map names the JSR and npm versions; `package.json` only drives the Node tooling.
