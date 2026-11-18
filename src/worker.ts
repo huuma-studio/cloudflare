@@ -1,5 +1,6 @@
 import type { DevEnvironment, Plugin } from "vite";
-import { relative } from "node:path";
+import { realpathSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { appBase, SERVER_ID, SERVER_READY } from "@huuma/ui/vite/adapter";
 
 /**
@@ -29,12 +30,53 @@ export interface DevExportCheck {
 }
 
 /**
+ * What `virtual:huuma/worker` imports from dependencies, which Vite
+ * pre-bundles up front: found on the first request, they were bundled
+ * again and the Worker's modules ran a second time in the same isolate.
+ */
+export const WORKER_DEPENDENCIES: readonly string[] = [
+  "@huuma/cloudflare/runtime",
+  "@huuma/ui/vite/runtime",
+];
+
+/**
+ * The Worker's dependencies Vite pre-bundles anyway: those installed in
+ * `node_modules` below or above `root`. A linked package, e.g. @huuma/ui
+ * from its repository, is served as source, and pre-bundling one of its
+ * modules would give the Worker a second copy of it.
+ */
+export function workerDependencies(root: string): string[] {
+  return WORKER_DEPENDENCIES.filter((dependency) =>
+    installed(root, dependency.split("/").slice(0, 2).join("/")),
+  );
+}
+
+function installed(root: string, name: string): boolean {
+  for (let dir = resolve(root); ; dir = dirname(dir)) {
+    try {
+      return /[\\/]node_modules[\\/]/.test(realpathSync(join(dir, "node_modules", name)));
+    } catch {
+      if (dir === dirname(dir)) return false;
+    }
+  }
+}
+
+/**
  * Serves `virtual:huuma/worker`. In dev, it fails with the message of each
  * of `checks()` whose export the app's server entry lacks.
  */
 export function workerPlugin(checks: () => readonly DevExportCheck[] = () => []): Plugin {
+  let root = process.cwd();
   return {
     name: "huuma:worker",
+    config(config) {
+      root = config.root ?? process.cwd();
+    },
+    configEnvironment(name) {
+      if (name === "ssr") {
+        return { optimizeDeps: { include: workerDependencies(root) } };
+      }
+    },
     resolveId: {
       filter: { id: new RegExp(`^${WORKER_ID}$`) },
       handler() {
