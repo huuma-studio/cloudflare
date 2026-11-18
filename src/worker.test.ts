@@ -1,13 +1,20 @@
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 import { createServer, type RunnableDevEnvironment, type ViteDevServer } from "vite";
 import { huuma } from "@huuma/ui/vite";
-import { cp, mkdtemp, rename, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rename, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { fixtures } from "../test/build.ts";
 
-import { WORKER_ID, workerModule, workerPlugin } from "./worker.ts";
+import {
+  WORKER_DEPENDENCIES,
+  WORKER_ID,
+  workerDependencies,
+  workerModule,
+  workerPlugin,
+} from "./worker.ts";
 
 const fixture = fileURLToPath(new URL("../test/fixtures/basic", import.meta.url));
 
@@ -115,5 +122,52 @@ describe(workerModule.name, () => {
     expect(code).toContain('throw new Error(missing.join("\\n"));');
     expect(code.indexOf("throw")).toBeLessThan(code.indexOf("import.meta.hot"));
     expect(workerModule("/")).not.toContain("throw");
+  });
+});
+
+describe("the Worker's dependencies", () => {
+  test("are pre-bundled up front, in the Worker's environment only", async () => {
+    const server = await createServer({
+      root: fixture,
+      configFile: false,
+      logLevel: "silent",
+      server: { middlewareMode: true, ws: false },
+      plugins: [workerPlugin()],
+    });
+    try {
+      // This repository installs @huuma/ui, but not itself.
+      expect(server.environments.ssr.config.optimizeDeps.include).toContain(
+        "@huuma/ui/vite/runtime",
+      );
+      expect(server.environments.client.config.optimizeDeps.include ?? []).not.toContain(
+        "@huuma/ui/vite/runtime",
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("are what the Worker module imports", () => {
+    for (const dependency of WORKER_DEPENDENCIES) {
+      expect(workerModule("/", "/")).toContain(`from "${dependency}"`);
+    }
+  });
+
+  test("leave out linked and missing packages", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "huuma-worker-deps-"));
+    try {
+      // @huuma/ui installed in a parent's node_modules, @huuma/cloudflare
+      // linked from outside any.
+      const app = join(dir, "packages/app");
+      await mkdir(app, { recursive: true });
+      await mkdir(join(dir, "node_modules/@huuma/ui"), { recursive: true });
+      await mkdir(join(dir, "cloudflare"));
+      await mkdir(join(app, "node_modules/@huuma"), { recursive: true });
+      await symlink(join(dir, "cloudflare"), join(app, "node_modules/@huuma/cloudflare"));
+      expect(workerDependencies(app)).toStrictEqual(["@huuma/ui/vite/runtime"]);
+      expect(workerDependencies(tmpdir())).toStrictEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
